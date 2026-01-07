@@ -117,10 +117,10 @@ export default async function handler(req, res) {
         return res.status(401).json({ error: "Unauthorized" });
       }
 
-      // Extract new field values from request body
-      const { name, rarity, stats, value_normal, value_golden, value_rainbow, image_url } = req.body;
+      // Debug warning: Extract all fields including new stats_type field
+      const { name, rarity, stats, stats_type, value_normal, value_golden, value_rainbow, image_url } = req.body;
 
-      console.log('[Backend PUT] Updating pet with data:', { name, rarity, stats, value_normal, value_golden, value_rainbow });
+      console.log('[Backend PUT] Updating pet with data:', { name, rarity, stats, stats_type, value_normal, value_golden, value_rainbow });
 
       // Validate required fields
       if (!name || !rarity) {
@@ -153,10 +153,11 @@ export default async function handler(req, res) {
         .update({
           name,
           rarity,
-          stats: stats || 0,
-          value_normal: value_normal || 0,
-          value_golden: value_golden || 0,
-          value_rainbow: value_rainbow || 0,
+          stats: stats || '0',
+          stats_type: stats_type || 'value',
+          value_normal: value_normal || '0',
+          value_golden: value_golden || '0',
+          value_rainbow: value_rainbow || '0',
           image_url: image_url || null,
           updated_at: new Date().toISOString()
         })
@@ -180,6 +181,7 @@ export default async function handler(req, res) {
       if (oldPet.name !== name) changes.name = { from: oldPet.name, to: name };
       if (oldPet.rarity !== rarity) changes.rarity = { from: oldPet.rarity, to: rarity };
       if (oldPet.stats !== stats) changes.stats = { from: oldPet.stats, to: stats };
+      if (oldPet.stats_type !== stats_type) changes.stats_type = { from: oldPet.stats_type, to: stats_type };
       if (oldPet.value_normal !== value_normal) changes.value_normal = { from: oldPet.value_normal, to: value_normal };
       if (oldPet.value_golden !== value_golden) changes.value_golden = { from: oldPet.value_golden, to: value_golden };
       if (oldPet.value_rainbow !== value_rainbow) changes.value_rainbow = { from: oldPet.value_rainbow, to: value_rainbow };
@@ -243,6 +245,7 @@ export default async function handler(req, res) {
             name: pet.name,
             rarity: pet.rarity,
             stats: pet.stats,
+            stats_type: pet.stats_type,
             value_normal: pet.value_normal,
             value_golden: pet.value_golden,
             value_rainbow: pet.value_rainbow
