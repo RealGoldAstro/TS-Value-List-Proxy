@@ -3,12 +3,12 @@
 
 import { createClient } from "@supabase/supabase-js";
 
-// Check if service role key exists
+// Debug warning: Check if service role key exists on startup
 if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
   console.error('[FATAL] SUPABASE_SERVICE_ROLE_KEY environment variable is not set!');
 }
 
-// Regular client for reads
+// Regular client for authentication checks
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_ANON_KEY
@@ -19,7 +19,7 @@ const supabaseAdmin = process.env.SUPABASE_SERVICE_ROLE_KEY
   ? createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
   : null;
 
-// Verify admin credentials
+// Verify admin credentials against database
 async function verifyAdmin(username, password) {
   if (!username || !password) return false;
 
@@ -39,9 +39,12 @@ async function verifyAdmin(username, password) {
   }
 }
 
-// Log action to audit_log
+// Log action to audit_log table
 async function logAudit(username, actionType, petId, petName, changes) {
-  if (!supabaseAdmin) return;
+  if (!supabaseAdmin) {
+    console.warn("[Audit Warning] Service role key not configured, skipping audit log");
+    return;
+  }
   
   try {
     await supabaseAdmin
@@ -61,13 +64,13 @@ async function logAudit(username, actionType, petId, petName, changes) {
 }
 
 export default async function handler(req, res) {
-  // Set CORS headers first
+  // Set CORS headers for cross-origin requests
   res.setHeader("Access-Control-Allow-Credentials", "true");
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version, X-Admin-Username, X-Admin-Password");
 
-  // Handle OPTIONS immediately
+  // Handle preflight OPTIONS request
   if (req.method === "OPTIONS") {
     res.status(200).end();
     return;
@@ -82,16 +85,18 @@ export default async function handler(req, res) {
     });
   }
 
+  // Get pet ID from URL parameter
   const { id } = req.query;
   const petId = parseInt(id);
 
   console.log('[Backend] Method:', req.method, 'Pet ID:', petId);
 
+  // Validate pet ID is a number
   if (isNaN(petId)) {
     return res.status(400).json({ error: "Invalid pet ID" });
   }
 
-  // PUT: Update pet
+  // PUT: Update existing pet
   if (req.method === "PUT") {
     try {
       const username = req.headers['x-admin-username'];
@@ -99,27 +104,31 @@ export default async function handler(req, res) {
 
       console.log('[Backend PUT] Username:', username, 'Pet ID:', petId);
 
+      // Check credentials provided
       if (!username || !password) {
         console.log('[Backend PUT] Missing credentials');
         return res.status(401).json({ error: "Missing credentials" });
       }
 
+      // Verify admin credentials
       const isValid = await verifyAdmin(username, password);
       if (!isValid) {
         console.log('[Backend PUT] Auth failed');
         return res.status(401).json({ error: "Unauthorized" });
       }
 
-      const { name, rarity, tap_stats, gem_stats, value, image_url } = req.body;
+      // Extract new field values from request body
+      const { name, rarity, stats, value_normal, value_golden, value_rainbow, image_url } = req.body;
 
-      console.log('[Backend PUT] Updating pet with data:', { name, rarity, tap_stats, gem_stats, value });
+      console.log('[Backend PUT] Updating pet with data:', { name, rarity, stats, value_normal, value_golden, value_rainbow });
 
+      // Validate required fields
       if (!name || !rarity) {
         console.log('[Backend PUT] Missing required fields');
         return res.status(400).json({ error: "Name and rarity are required" });
       }
 
-      // Get old pet data using admin client
+      // Get old pet data using admin client for audit comparison
       const { data: existingPets, error: checkError } = await supabaseAdmin
         .from("pets")
         .select("*")
@@ -144,9 +153,10 @@ export default async function handler(req, res) {
         .update({
           name,
           rarity,
-          tap_stats: tap_stats || 0,
-          gem_stats: gem_stats || 0,
-          value: value || 0,
+          stats: stats || 0,
+          value_normal: value_normal || 0,
+          value_golden: value_golden || 0,
+          value_rainbow: value_rainbow || 0,
           image_url: image_url || null,
           updated_at: new Date().toISOString()
         })
@@ -165,15 +175,17 @@ export default async function handler(req, res) {
 
       const updatedPet = updatedPets[0];
 
-      // Calculate changes
+      // Calculate what changed for audit log
       const changes = {};
       if (oldPet.name !== name) changes.name = { from: oldPet.name, to: name };
       if (oldPet.rarity !== rarity) changes.rarity = { from: oldPet.rarity, to: rarity };
-      if (oldPet.tap_stats !== tap_stats) changes.tap_stats = { from: oldPet.tap_stats, to: tap_stats };
-      if (oldPet.gem_stats !== gem_stats) changes.gem_stats = { from: oldPet.gem_stats, to: gem_stats };
-      if (oldPet.value !== value) changes.value = { from: oldPet.value, to: value };
+      if (oldPet.stats !== stats) changes.stats = { from: oldPet.stats, to: stats };
+      if (oldPet.value_normal !== value_normal) changes.value_normal = { from: oldPet.value_normal, to: value_normal };
+      if (oldPet.value_golden !== value_golden) changes.value_golden = { from: oldPet.value_golden, to: value_golden };
+      if (oldPet.value_rainbow !== value_rainbow) changes.value_rainbow = { from: oldPet.value_rainbow, to: value_rainbow };
+      if (oldPet.image_url !== image_url) changes.image_url = { from: oldPet.image_url ? 'changed' : 'none', to: image_url ? 'changed' : 'none' };
 
-      // Log to audit
+      // Log to audit_log table
       await logAudit(username, 'EDIT', updatedPet.id, updatedPet.name, changes);
 
       console.log('[Backend PUT] Success - updated pet:', updatedPet.id);
@@ -184,7 +196,7 @@ export default async function handler(req, res) {
     }
   }
 
-  // DELETE: Remove pet
+  // DELETE: Remove pet from database
   if (req.method === "DELETE") {
     try {
       const username = req.headers['x-admin-username'];
@@ -192,18 +204,20 @@ export default async function handler(req, res) {
 
       console.log('[Backend DELETE] Username:', username, 'Pet ID:', petId);
 
+      // Check credentials provided
       if (!username || !password) {
         console.log('[Backend DELETE] Missing credentials');
         return res.status(401).json({ error: "Missing credentials" });
       }
 
+      // Verify admin credentials
       const isValid = await verifyAdmin(username, password);
       if (!isValid) {
         console.log('[Backend DELETE] Auth failed');
         return res.status(401).json({ error: "Unauthorized" });
       }
 
-      // Get pet data before deletion using admin client
+      // Get pet data before deletion using admin client for audit log
       const { data: pets } = await supabaseAdmin
         .from("pets")
         .select("*")
@@ -211,7 +225,7 @@ export default async function handler(req, res) {
 
       const pet = pets && pets.length > 0 ? pets[0] : null;
 
-      // Delete using admin client
+      // Delete using admin client (bypasses RLS)
       const { error } = await supabaseAdmin
         .from("pets")
         .delete()
@@ -222,14 +236,16 @@ export default async function handler(req, res) {
         return res.status(500).json({ error: "Failed to delete pet", details: error.message });
       }
 
+      // Log deleted pet data to audit_log
       if (pet) {
         await logAudit(username, 'DELETE', pet.id, pet.name, {
           deleted_pet: {
             name: pet.name,
             rarity: pet.rarity,
-            tap_stats: pet.tap_stats,
-            gem_stats: pet.gem_stats,
-            value: pet.value
+            stats: pet.stats,
+            value_normal: pet.value_normal,
+            value_golden: pet.value_golden,
+            value_rainbow: pet.value_rainbow
           }
         });
       }
@@ -242,6 +258,7 @@ export default async function handler(req, res) {
     }
   }
 
+  // Method not allowed
   return res.status(405).json({ error: "Method not allowed" });
 }
 
