@@ -1,4 +1,4 @@
-// File type: Vercel Serverless Function (Node.js API route) - Supabase version
+// File type: Vercel Serverless Function (Node.js API route) - with CORS
 // Path: /api/pets.js
 
 import { createClient } from "@supabase/supabase-js";
@@ -6,13 +6,22 @@ import { createClient } from "@supabase/supabase-js";
 const THIRTY_MINUTES_SECONDS = 30 * 60;
 
 // Debug warning: Supabase client uses anon key only (public reads).
-// Initialize client with environment variables from .env.local or Vercel settings.
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_ANON_KEY
 );
 
 export default async function handler(req, res) {
+  // Debug warning: Add CORS headers so GitHub Pages can call this API
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+
+  // Handle preflight OPTIONS request
+  if (req.method === "OPTIONS") {
+    return res.status(200).end();
+  }
+
   // Debug warning: Only GET is enabled for now; other methods are blocked.
   if (req.method !== "GET") {
     res.setHeader("Allow", "GET");
@@ -26,8 +35,7 @@ export default async function handler(req, res) {
   );
 
   try {
-    // Debug warning: Query the 'pets' table (must be created in Supabase first).
-    // Fetch all pets, ordered by value descending.
+    // Debug warning: Query the 'pets' table from Supabase
     const { data: pets, error } = await supabase
       .from("pets")
       .select("id, name, rarity, stats, value, image_url")
@@ -46,5 +54,5 @@ export default async function handler(req, res) {
   }
 }
 
-// File type: Vercel Serverless Function (Node.js API route) - Supabase version
+// File type: Vercel Serverless Function (Node.js API route) - with CORS
 // Path: /api/pets.js
