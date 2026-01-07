@@ -61,34 +61,62 @@ export default async function handler(req, res) {
   }
 
   const { id } = req.query;
-  const petId = id;
+  const petId = parseInt(id);
+
+  console.log('[Backend] Method:', req.method, 'Pet ID:', petId);
+
+  if (isNaN(petId)) {
+    return res.status(400).json({ error: "Invalid pet ID" });
+  }
 
   // PUT: Update pet
   if (req.method === "PUT") {
-    const username = req.headers['x-admin-username'];
-    const password = req.headers['x-admin-password'];
-
-    console.log('[Backend PUT] Username:', username, 'Pet ID:', petId);
-
-    const isValid = await verifyAdmin(username, password);
-    if (!isValid) {
-      console.log('[Backend PUT] Auth failed');
-      return res.status(401).json({ error: "Unauthorized" });
-    }
-
     try {
-      const { data: oldPet } = await supabase
-        .from("pets")
-        .select("*")
-        .eq("id", petId)
-        .single();
+      const username = req.headers['x-admin-username'];
+      const password = req.headers['x-admin-password'];
+
+      console.log('[Backend PUT] Username:', username, 'Pet ID:', petId);
+
+      if (!username || !password) {
+        console.log('[Backend PUT] Missing credentials');
+        return res.status(401).json({ error: "Missing credentials" });
+      }
+
+      const isValid = await verifyAdmin(username, password);
+      if (!isValid) {
+        console.log('[Backend PUT] Auth failed');
+        return res.status(401).json({ error: "Unauthorized" });
+      }
 
       const { name, rarity, tap_stats, gem_stats, value, image_url } = req.body;
 
+      console.log('[Backend PUT] Updating pet with data:', { name, rarity, tap_stats, gem_stats, value });
+
       if (!name || !rarity) {
+        console.log('[Backend PUT] Missing required fields');
         return res.status(400).json({ error: "Name and rarity are required" });
       }
 
+      // First check if pet exists (without .single() to avoid error)
+      const { data: existingPets, error: checkError } = await supabase
+        .from("pets")
+        .select("*")
+        .eq("id", petId);
+
+      if (checkError) {
+        console.error("[Backend PUT] Error checking pet existence:", checkError);
+        return res.status(500).json({ error: "Database error", details: checkError.message });
+      }
+
+      if (!existingPets || existingPets.length === 0) {
+        console.log('[Backend PUT] Pet not found:', petId);
+        return res.status(404).json({ error: "Pet not found - it may have been deleted" });
+      }
+
+      const oldPet = existingPets[0];
+      console.log('[Backend PUT] Found existing pet:', oldPet.name);
+
+      // Perform update
       const { data: updatedPet, error } = await supabase
         .from("pets")
         .update({
@@ -105,52 +133,55 @@ export default async function handler(req, res) {
         .single();
 
       if (error) {
-        console.error("[Supabase Error]:", error);
-        return res.status(500).json({ error: "Failed to update pet" });
+        console.error("[Backend PUT] Supabase update error:", error);
+        return res.status(500).json({ error: "Failed to update pet", details: error.message });
       }
 
-      if (!updatedPet) {
-        return res.status(404).json({ error: "Pet not found" });
-      }
-
+      // Calculate changes
       const changes = {};
-      if (oldPet) {
-        if (oldPet.name !== name) changes.name = { from: oldPet.name, to: name };
-        if (oldPet.rarity !== rarity) changes.rarity = { from: oldPet.rarity, to: rarity };
-        if (oldPet.tap_stats !== tap_stats) changes.tap_stats = { from: oldPet.tap_stats, to: tap_stats };
-        if (oldPet.gem_stats !== gem_stats) changes.gem_stats = { from: oldPet.gem_stats, to: gem_stats };
-        if (oldPet.value !== value) changes.value = { from: oldPet.value, to: value };
-      }
+      if (oldPet.name !== name) changes.name = { from: oldPet.name, to: name };
+      if (oldPet.rarity !== rarity) changes.rarity = { from: oldPet.rarity, to: rarity };
+      if (oldPet.tap_stats !== tap_stats) changes.tap_stats = { from: oldPet.tap_stats, to: tap_stats };
+      if (oldPet.gem_stats !== gem_stats) changes.gem_stats = { from: oldPet.gem_stats, to: gem_stats };
+      if (oldPet.value !== value) changes.value = { from: oldPet.value, to: value };
 
+      // Log to audit
       await logAudit(username, 'EDIT', updatedPet.id, updatedPet.name, changes);
 
-      console.log('[Backend PUT] Success:', updatedPet.id);
+      console.log('[Backend PUT] Success - updated pet:', updatedPet.id);
       return res.status(200).json(updatedPet);
     } catch (err) {
-      console.error("[API Error]:", err);
-      return res.status(500).json({ error: "Internal server error" });
+      console.error("[Backend PUT] Unexpected error:", err);
+      return res.status(500).json({ error: "Internal server error", details: err.message });
     }
   }
 
   // DELETE: Remove pet
   if (req.method === "DELETE") {
-    const username = req.headers['x-admin-username'];
-    const password = req.headers['x-admin-password'];
-
-    console.log('[Backend DELETE] Username:', username, 'Pet ID:', petId);
-
-    const isValid = await verifyAdmin(username, password);
-    if (!isValid) {
-      console.log('[Backend DELETE] Auth failed');
-      return res.status(401).json({ error: "Unauthorized" });
-    }
-
     try {
-      const { data: pet } = await supabase
+      const username = req.headers['x-admin-username'];
+      const password = req.headers['x-admin-password'];
+
+      console.log('[Backend DELETE] Username:', username, 'Pet ID:', petId);
+
+      if (!username || !password) {
+        console.log('[Backend DELETE] Missing credentials');
+        return res.status(401).json({ error: "Missing credentials" });
+      }
+
+      const isValid = await verifyAdmin(username, password);
+      if (!isValid) {
+        console.log('[Backend DELETE] Auth failed');
+        return res.status(401).json({ error: "Unauthorized" });
+      }
+
+      // Get pet data before deletion (without .single())
+      const { data: pets } = await supabase
         .from("pets")
         .select("*")
-        .eq("id", petId)
-        .single();
+        .eq("id", petId);
+
+      const pet = pets && pets.length > 0 ? pets[0] : null;
 
       const { error } = await supabase
         .from("pets")
@@ -158,8 +189,8 @@ export default async function handler(req, res) {
         .eq("id", petId);
 
       if (error) {
-        console.error("[Supabase Error]:", error);
-        return res.status(500).json({ error: "Failed to delete pet" });
+        console.error("[Backend DELETE] Supabase error:", error);
+        return res.status(500).json({ error: "Failed to delete pet", details: error.message });
       }
 
       if (pet) {
@@ -177,8 +208,8 @@ export default async function handler(req, res) {
       console.log('[Backend DELETE] Success:', petId);
       return res.status(200).json({ success: true, message: "Pet deleted" });
     } catch (err) {
-      console.error("[API Error]:", err);
-      return res.status(500).json({ error: "Internal server error" });
+      console.error("[Backend DELETE] Unexpected error:", err);
+      return res.status(500).json({ error: "Internal server error", details: err.message });
     }
   }
 
