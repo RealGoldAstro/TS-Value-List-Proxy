@@ -3,9 +3,16 @@
 
 import { createClient } from "@supabase/supabase-js";
 
+// Regular client for reads
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_ANON_KEY
+);
+
+// Admin client with service role key (bypasses RLS)
+const supabaseAdmin = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
 // Verify admin credentials
@@ -31,7 +38,7 @@ async function verifyAdmin(username, password) {
 // Log action to audit_log
 async function logAudit(username, actionType, petId, petName, changes) {
   try {
-    await supabase
+    await supabaseAdmin
       .from("audit_log")
       .insert([
         {
@@ -97,8 +104,8 @@ export default async function handler(req, res) {
         return res.status(400).json({ error: "Name and rarity are required" });
       }
 
-      // First check if pet exists (without .single() to avoid error)
-      const { data: existingPets, error: checkError } = await supabase
+      // Get old pet data using admin client
+      const { data: existingPets, error: checkError } = await supabaseAdmin
         .from("pets")
         .select("*")
         .eq("id", petId);
@@ -110,14 +117,14 @@ export default async function handler(req, res) {
 
       if (!existingPets || existingPets.length === 0) {
         console.log('[Backend PUT] Pet not found:', petId);
-        return res.status(404).json({ error: "Pet not found - it may have been deleted" });
+        return res.status(404).json({ error: "Pet not found" });
       }
 
       const oldPet = existingPets[0];
       console.log('[Backend PUT] Found existing pet:', oldPet.name);
 
-      // Perform update
-      const { data: updatedPet, error } = await supabase
+      // Perform update using admin client (bypasses RLS)
+      const { data: updatedPets, error } = await supabaseAdmin
         .from("pets")
         .update({
           name,
@@ -129,13 +136,19 @@ export default async function handler(req, res) {
           updated_at: new Date().toISOString()
         })
         .eq("id", petId)
-        .select()
-        .single();
+        .select();
 
       if (error) {
         console.error("[Backend PUT] Supabase update error:", error);
         return res.status(500).json({ error: "Failed to update pet", details: error.message });
       }
+
+      if (!updatedPets || updatedPets.length === 0) {
+        console.error("[Backend PUT] Update returned no rows");
+        return res.status(500).json({ error: "Update failed - no rows affected" });
+      }
+
+      const updatedPet = updatedPets[0];
 
       // Calculate changes
       const changes = {};
@@ -175,15 +188,16 @@ export default async function handler(req, res) {
         return res.status(401).json({ error: "Unauthorized" });
       }
 
-      // Get pet data before deletion (without .single())
-      const { data: pets } = await supabase
+      // Get pet data before deletion using admin client
+      const { data: pets } = await supabaseAdmin
         .from("pets")
         .select("*")
         .eq("id", petId);
 
       const pet = pets && pets.length > 0 ? pets[0] : null;
 
-      const { error } = await supabase
+      // Delete using admin client
+      const { error } = await supabaseAdmin
         .from("pets")
         .delete()
         .eq("id", petId);
