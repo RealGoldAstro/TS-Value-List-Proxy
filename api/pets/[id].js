@@ -3,6 +3,11 @@
 
 import { createClient } from "@supabase/supabase-js";
 
+// Check if service role key exists
+if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+  console.error('[FATAL] SUPABASE_SERVICE_ROLE_KEY environment variable is not set!');
+}
+
 // Regular client for reads
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -10,10 +15,9 @@ const supabase = createClient(
 );
 
 // Admin client with service role key (bypasses RLS)
-const supabaseAdmin = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY
-);
+const supabaseAdmin = process.env.SUPABASE_SERVICE_ROLE_KEY 
+  ? createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
+  : null;
 
 // Verify admin credentials
 async function verifyAdmin(username, password) {
@@ -37,6 +41,8 @@ async function verifyAdmin(username, password) {
 
 // Log action to audit_log
 async function logAudit(username, actionType, petId, petName, changes) {
+  if (!supabaseAdmin) return;
+  
   try {
     await supabaseAdmin
       .from("audit_log")
@@ -65,6 +71,15 @@ export default async function handler(req, res) {
   if (req.method === "OPTIONS") {
     res.status(200).end();
     return;
+  }
+
+  // Check if admin client is available
+  if (!supabaseAdmin) {
+    console.error('[Backend] SUPABASE_SERVICE_ROLE_KEY not configured');
+    return res.status(500).json({ 
+      error: "Server configuration error", 
+      details: "Service role key not configured - contact administrator" 
+    });
   }
 
   const { id } = req.query;
