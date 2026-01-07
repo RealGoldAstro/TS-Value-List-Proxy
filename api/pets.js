@@ -102,10 +102,11 @@ async function handleGet(req, res) {
   );
 
   try {
+    // Debug warning: Now includes stats_type field for percentage/value display
     const { data: pets, error } = await supabase
       .from("pets")
-      .select("id, name, rarity, stats, value_normal, value_golden, value_rainbow, image_url, updated_at")
-      .order("value_normal", { ascending: false }); // Sort by normal value descending
+      .select("id, name, rarity, stats, stats_type, value_normal, value_golden, value_rainbow, image_url, updated_at")
+      .order("id", { ascending: false }); // Sort by ID descending (newest first)
 
     if (error) {
       console.error("[Supabase Error]:", error);
@@ -140,7 +141,8 @@ async function handlePost(req, res) {
   }
 
   try {
-    const { name, rarity, stats, value_normal, value_golden, value_rainbow, image_url } = req.body;
+    // Debug warning: Now accepts text values for stats and value fields, plus stats_type
+    const { name, rarity, stats, stats_type, value_normal, value_golden, value_rainbow, image_url } = req.body;
 
     // Validate required fields
     if (!name || !rarity) {
@@ -154,10 +156,11 @@ async function handlePost(req, res) {
         {
           name,
           rarity,
-          stats: stats || 0,
-          value_normal: value_normal || 0,
-          value_golden: value_golden || 0,
-          value_rainbow: value_rainbow || 0,
+          stats: stats || '0',
+          stats_type: stats_type || 'value',
+          value_normal: value_normal || '0',
+          value_golden: value_golden || '0',
+          value_rainbow: value_rainbow || '0',
           image_url: image_url || null,
           updated_at: new Date().toISOString()
         }
@@ -174,10 +177,11 @@ async function handlePost(req, res) {
     await logAudit(username, 'ADD', newPet.id, newPet.name, {
       name,
       rarity,
-      stats: stats || 0,
-      value_normal: value_normal || 0,
-      value_golden: value_golden || 0,
-      value_rainbow: value_rainbow || 0
+      stats: stats || '0',
+      stats_type: stats_type || 'value',
+      value_normal: value_normal || '0',
+      value_golden: value_golden || '0',
+      value_rainbow: value_rainbow || '0'
     });
 
     console.log('[Backend] Pet created successfully:', newPet.id);
@@ -226,7 +230,8 @@ async function handlePut(req, res) {
       .eq("id", petId)
       .single();
 
-    const { name, rarity, stats, value_normal, value_golden, value_rainbow, image_url } = req.body;
+    // Debug warning: Extract all fields including new stats_type
+    const { name, rarity, stats, stats_type, value_normal, value_golden, value_rainbow, image_url } = req.body;
 
     // Validate required fields
     if (!name || !rarity) {
@@ -239,10 +244,11 @@ async function handlePut(req, res) {
       .update({
         name,
         rarity,
-        stats: stats || 0,
-        value_normal: value_normal || 0,
-        value_golden: value_golden || 0,
-        value_rainbow: value_rainbow || 0,
+        stats: stats || '0',
+        stats_type: stats_type || 'value',
+        value_normal: value_normal || '0',
+        value_golden: value_golden || '0',
+        value_rainbow: value_rainbow || '0',
         image_url: image_url || null,
         updated_at: new Date().toISOString()
       })
@@ -265,6 +271,7 @@ async function handlePut(req, res) {
       if (oldPet.name !== name) changes.name = { from: oldPet.name, to: name };
       if (oldPet.rarity !== rarity) changes.rarity = { from: oldPet.rarity, to: rarity };
       if (oldPet.stats !== stats) changes.stats = { from: oldPet.stats, to: stats };
+      if (oldPet.stats_type !== stats_type) changes.stats_type = { from: oldPet.stats_type, to: stats_type };
       if (oldPet.value_normal !== value_normal) changes.value_normal = { from: oldPet.value_normal, to: value_normal };
       if (oldPet.value_golden !== value_golden) changes.value_golden = { from: oldPet.value_golden, to: value_golden };
       if (oldPet.value_rainbow !== value_rainbow) changes.value_rainbow = { from: oldPet.value_rainbow, to: value_rainbow };
@@ -338,6 +345,7 @@ async function handleDelete(req, res) {
           name: pet.name,
           rarity: pet.rarity,
           stats: pet.stats,
+          stats_type: pet.stats_type,
           value_normal: pet.value_normal,
           value_golden: pet.value_golden,
           value_rainbow: pet.value_rainbow
