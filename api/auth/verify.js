@@ -3,7 +3,7 @@
 
 import { createClient } from "@supabase/supabase-js";
 
-// Debug warning: Authentication verification endpoint
+// Debug warning: Authentication verification endpoint with detailed logging
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_ANON_KEY
@@ -28,6 +28,8 @@ export default async function handler(req, res) {
   try {
     const { username, password } = req.body;
 
+    console.log('[Auth] Verifying credentials for username:', username);
+
     if (!username || !password) {
       return res.status(400).json({ error: "Username and password required", valid: false });
     }
@@ -35,17 +37,28 @@ export default async function handler(req, res) {
     // Query admin_users table
     const { data: admin, error } = await supabase
       .from("admin_users")
-      .select("id, username, is_active")
+      .select("id, username, is_active, password")
       .eq("username", username)
-      .eq("password", password)
       .eq("is_active", true)
       .single();
 
-    if (error || !admin) {
-      return res.status(200).json({ valid: false });
+    if (error) {
+      console.log('[Auth] Database error:', error);
+      return res.status(200).json({ valid: false, reason: 'User not found or not active' });
     }
 
-    // Credentials are valid and user is active
+    if (!admin) {
+      console.log('[Auth] No admin found for username:', username);
+      return res.status(200).json({ valid: false, reason: 'Invalid username' });
+    }
+
+    // Check password match
+    if (admin.password !== password) {
+      console.log('[Auth] Password mismatch for username:', username);
+      return res.status(200).json({ valid: false, reason: 'Invalid password' });
+    }
+
+    console.log('[Auth] Credentials valid for:', username);
     return res.status(200).json({ valid: true, username: admin.username });
   } catch (err) {
     console.error("[Auth Error]:", err);
