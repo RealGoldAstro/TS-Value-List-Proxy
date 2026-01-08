@@ -117,10 +117,10 @@ export default async function handler(req, res) {
         return res.status(401).json({ error: "Unauthorized" });
       }
 
-      // Debug warning: Extract all fields including new stats_type field
-      const { name, rarity, stats, stats_type, value_normal, value_golden, value_rainbow, image_url } = req.body;
+      // Debug warning: Extract all fields including new value_void field
+      const { name, rarity, stats, stats_type, value_normal, value_golden, value_rainbow, value_void, image_url } = req.body;
 
-      console.log('[Backend PUT] Updating pet with data:', { name, rarity, stats, stats_type, value_normal, value_golden, value_rainbow });
+      console.log('[Backend PUT] Updating pet with data:', { name, rarity, stats, stats_type, value_normal, value_golden, value_rainbow, value_void });
 
       // Validate required fields
       if (!name || !rarity) {
@@ -158,6 +158,7 @@ export default async function handler(req, res) {
           value_normal: value_normal || '0',
           value_golden: value_golden || '0',
           value_rainbow: value_rainbow || '0',
+          value_void: value_void || '1',
           image_url: image_url || null,
           updated_at: new Date().toISOString()
         })
@@ -176,7 +177,7 @@ export default async function handler(req, res) {
 
       const updatedPet = updatedPets[0];
 
-      // Calculate what changed for audit log
+      // Calculate what changed for audit log (includes void value)
       const changes = {};
       if (oldPet.name !== name) changes.name = { from: oldPet.name, to: name };
       if (oldPet.rarity !== rarity) changes.rarity = { from: oldPet.rarity, to: rarity };
@@ -185,6 +186,7 @@ export default async function handler(req, res) {
       if (oldPet.value_normal !== value_normal) changes.value_normal = { from: oldPet.value_normal, to: value_normal };
       if (oldPet.value_golden !== value_golden) changes.value_golden = { from: oldPet.value_golden, to: value_golden };
       if (oldPet.value_rainbow !== value_rainbow) changes.value_rainbow = { from: oldPet.value_rainbow, to: value_rainbow };
+      if (oldPet.value_void !== value_void) changes.value_void = { from: oldPet.value_void, to: value_void };
       if (oldPet.image_url !== image_url) changes.image_url = { from: oldPet.image_url ? 'changed' : 'none', to: image_url ? 'changed' : 'none' };
 
       // Log to audit_log table
@@ -238,7 +240,7 @@ export default async function handler(req, res) {
         return res.status(500).json({ error: "Failed to delete pet", details: error.message });
       }
 
-      // Log deleted pet data to audit_log
+      // Log deleted pet data to audit_log (includes void value)
       if (pet) {
         await logAudit(username, 'DELETE', pet.id, pet.name, {
           deleted_pet: {
@@ -248,7 +250,8 @@ export default async function handler(req, res) {
             stats_type: pet.stats_type,
             value_normal: pet.value_normal,
             value_golden: pet.value_golden,
-            value_rainbow: pet.value_rainbow
+            value_rainbow: pet.value_rainbow,
+            value_void: pet.value_void
           }
         });
       }
