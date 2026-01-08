@@ -102,10 +102,10 @@ async function handleGet(req, res) {
   );
 
   try {
-    // Debug warning: Now includes stats_type field for percentage/value display
+    // Debug warning: Now includes value_void field for new void variant
     const { data: pets, error } = await supabase
       .from("pets")
-      .select("id, name, rarity, stats, stats_type, value_normal, value_golden, value_rainbow, image_url, updated_at")
+      .select("id, name, rarity, stats, stats_type, value_normal, value_golden, value_rainbow, value_void, image_url, updated_at")
       .order("id", { ascending: false }); // Sort by ID descending (newest first)
 
     if (error) {
@@ -141,8 +141,8 @@ async function handlePost(req, res) {
   }
 
   try {
-    // Debug warning: Now accepts text values for stats and value fields, plus stats_type
-    const { name, rarity, stats, stats_type, value_normal, value_golden, value_rainbow, image_url } = req.body;
+    // Debug warning: Now accepts value_void field for new void variant
+    const { name, rarity, stats, stats_type, value_normal, value_golden, value_rainbow, value_void, image_url } = req.body;
 
     // Validate required fields
     if (!name || !rarity) {
@@ -161,6 +161,7 @@ async function handlePost(req, res) {
           value_normal: value_normal || '0',
           value_golden: value_golden || '0',
           value_rainbow: value_rainbow || '0',
+          value_void: value_void || '1',
           image_url: image_url || null,
           updated_at: new Date().toISOString()
         }
@@ -181,7 +182,8 @@ async function handlePost(req, res) {
       stats_type: stats_type || 'value',
       value_normal: value_normal || '0',
       value_golden: value_golden || '0',
-      value_rainbow: value_rainbow || '0'
+      value_rainbow: value_rainbow || '0',
+      value_void: value_void || '1'
     });
 
     console.log('[Backend] Pet created successfully:', newPet.id);
@@ -230,8 +232,8 @@ async function handlePut(req, res) {
       .eq("id", petId)
       .single();
 
-    // Debug warning: Extract all fields including new stats_type
-    const { name, rarity, stats, stats_type, value_normal, value_golden, value_rainbow, image_url } = req.body;
+    // Debug warning: Extract all fields including new value_void field
+    const { name, rarity, stats, stats_type, value_normal, value_golden, value_rainbow, value_void, image_url } = req.body;
 
     // Validate required fields
     if (!name || !rarity) {
@@ -249,6 +251,7 @@ async function handlePut(req, res) {
         value_normal: value_normal || '0',
         value_golden: value_golden || '0',
         value_rainbow: value_rainbow || '0',
+        value_void: value_void || '1',
         image_url: image_url || null,
         updated_at: new Date().toISOString()
       })
@@ -275,6 +278,7 @@ async function handlePut(req, res) {
       if (oldPet.value_normal !== value_normal) changes.value_normal = { from: oldPet.value_normal, to: value_normal };
       if (oldPet.value_golden !== value_golden) changes.value_golden = { from: oldPet.value_golden, to: value_golden };
       if (oldPet.value_rainbow !== value_rainbow) changes.value_rainbow = { from: oldPet.value_rainbow, to: value_rainbow };
+      if (oldPet.value_void !== value_void) changes.value_void = { from: oldPet.value_void, to: value_void };
       if (oldPet.image_url !== image_url) changes.image_url = { from: oldPet.image_url ? 'changed' : 'none', to: image_url ? 'changed' : 'none' };
     }
 
@@ -338,7 +342,7 @@ async function handleDelete(req, res) {
       return res.status(500).json({ error: "Failed to delete pet" });
     }
 
-    // Log to audit_log
+    // Log to audit_log (includes void value)
     if (pet) {
       await logAudit(username, 'DELETE', pet.id, pet.name, {
         deleted_pet: {
@@ -348,7 +352,8 @@ async function handleDelete(req, res) {
           stats_type: pet.stats_type,
           value_normal: pet.value_normal,
           value_golden: pet.value_golden,
-          value_rainbow: pet.value_rainbow
+          value_rainbow: pet.value_rainbow,
+          value_void: pet.value_void
         }
       });
     }
