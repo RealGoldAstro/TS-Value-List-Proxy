@@ -3,7 +3,7 @@
 
 import { createClient } from "@supabase/supabase-js";
 
-// Debug warning: Authentication verification endpoint with detailed logging
+// Debug warning: Authentication verification endpoint with mini-admin role support
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_ANON_KEY
@@ -34,10 +34,10 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: "Username and password required", valid: false });
     }
 
-    // Query admin_users table
+    // Query admin_users table with role info
     const { data: admin, error } = await supabase
       .from("admin_users")
-      .select("id, username, is_active, password")
+      .select("id, username, is_active, password, role")
       .eq("username", username)
       .eq("is_active", true)
       .single();
@@ -58,8 +58,13 @@ export default async function handler(req, res) {
       return res.status(200).json({ valid: false, reason: 'Invalid password' });
     }
 
-    console.log('[Auth] Credentials valid for:', username);
-    return res.status(200).json({ valid: true, username: admin.username });
+    // Debug warning: Return role info to frontend for permission checks
+    console.log('[Auth] Credentials valid for:', username, 'Role:', admin.role || 'admin');
+    return res.status(200).json({ 
+      valid: true, 
+      username: admin.username,
+      role: admin.role || 'admin'
+    });
   } catch (err) {
     console.error("[Auth Error]:", err);
     return res.status(500).json({ error: "Internal server error", valid: false });
