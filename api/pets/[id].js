@@ -19,28 +19,28 @@ const supabaseAdmin = process.env.SUPABASE_SERVICE_ROLE_KEY
   ? createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
   : null;
 
-// Verify admin credentials against database
+// Verify admin credentials against database and return role
 async function verifyAdmin(username, password) {
-  if (!username || !password) return false;
+  if (!username || !password) return null;
 
   try {
     const { data: admin, error } = await supabase
       .from("admin_users")
-      .select("id, username, is_active")
+      .select("id, username, is_active, role")
       .eq("username", username)
       .eq("password", password)
       .eq("is_active", true)
       .single();
 
-    return !error && admin;
+    return !error && admin ? admin : null;
   } catch (err) {
     console.error("[Auth Error]:", err);
-    return false;
+    return null;
   }
 }
 
-// Log action to audit_log table
-async function logAudit(username, actionType, petId, petName, changes) {
+// Log action to audit_log table with role info
+async function logAudit(username, actionType, petId, petName, changes, adminRole) {
   if (!supabaseAdmin) {
     console.warn("[Audit Warning] Service role key not configured, skipping audit log");
     return;
@@ -55,11 +55,98 @@ async function logAudit(username, actionType, petId, petName, changes) {
           action_type: actionType,
           pet_id: petId,
           pet_name: petName,
-          changes: changes || {}
+          changes: changes || {},
+          admin_role: adminRole || 'admin'
         }
       ]);
   } catch (err) {
     console.error("[Audit Log Error]:", err);
+  }
+}
+
+// Debug warning: Fetch webhook URL from database (only via service role)
+async function getWebhookUrl() {
+  if (!supabaseAdmin) return null;
+  
+  try {
+    const { data, error } = await supabaseAdmin
+      .from("webhook_config")
+      .select("webhook_url")
+      .eq("webhook_type", "miniadmin_edits")
+      .eq("is_active", true)
+      .single();
+    
+    if (error || !data) {
+      console.warn("[Webhook] No active webhook found");
+      return null;
+    }
+    
+    return data.webhook_url;
+  } catch (err) {
+    console.error("[Webhook Error]:", err);
+    return null;
+  }
+}
+
+// Debug warning: Send webhook notification for miniadmin edits
+async function sendWebhookNotification(username, petName, changes) {
+  try {
+    const webhookUrl = await getWebhookUrl();
+    if (!webhookUrl) return;
+    
+    // Build embed message with changes
+    const fields = [];
+    if (changes.value_normal) {
+      fields.push({
+        name: "Normal Value",
+        value: `${changes.value_normal.from} → ${changes.value_normal.to}`,
+        inline: true
+      });
+    }
+    if (changes.value_golden) {
+      fields.push({
+        name: "Golden Value",
+        value: `${changes.value_golden.from} → ${changes.value_golden.to}`,
+        inline: true
+      });
+    }
+    if (changes.value_rainbow) {
+      fields.push({
+        name: "Rainbow Value",
+        value: `${changes.value_rainbow.from} → ${changes.value_rainbow.to}`,
+        inline: true
+      });
+    }
+    if (changes.value_void) {
+      fields.push({
+        name: "Void Value",
+        value: `${changes.value_void.from} → ${changes.value_void.to}`,
+        inline: true
+      });
+    }
+    
+    const payload = {
+      embeds: [{
+        title: "🔧 Mini-Admin Pet Value Update",
+        description: `**${username}** edited **${petName}**`,
+        color: 0x3b82f6,
+        fields: fields,
+        timestamp: new Date().toISOString(),
+        footer: {
+          text: "Mini-Admin Edit Log"
+        }
+      }]
+    };
+    
+    await fetch(webhookUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    
+    console.log('[Webhook] Notification sent for:', petName);
+  } catch (err) {
+    console.error("[Webhook Send Error]:", err);
   }
 }
 
@@ -110,19 +197,18 @@ export default async function handler(req, res) {
         return res.status(401).json({ error: "Missing credentials" });
       }
 
-      // Verify admin credentials
-      const isValid = await verifyAdmin(username, password);
-      if (!isValid) {
+      // Verify admin credentials and get role
+      const admin = await verifyAdmin(username, password);
+      if (!admin) {
         console.log('[Backend PUT] Auth failed');
         return res.status(401).json({ error: "Unauthorized" });
       }
 
-      // Debug warning: Extract all fields including new value_void field
-      const { name, rarity, stats, stats_type, value_normal, value_golden, value_rainbow, value_void, image_url } = req.body;
+      // Debug warning: Extract all fields including how_to_get
+      const { name, rarity, stats, stats_type, value_normal, value_golden, value_rainbow, value_void, image_url, how_to_get } = req.body;
 
       console.log('[Backend PUT] Updating pet with data:', { name, rarity, stats, stats_type, value_normal, value_golden, value_rainbow, value_void });
 
-      // Validate required fields
       if (!name || !rarity) {
         console.log('[Backend PUT] Missing required fields');
         return res.status(400).json({ error: "Name and rarity are required" });
@@ -147,10 +233,20 @@ export default async function handler(req, res) {
       const oldPet = existingPets[0];
       console.log('[Backend PUT] Found existing pet:', oldPet.name);
 
-      // Perform update using admin client (bypasses RLS)
-      const { data: updatedPets, error } = await supabaseAdmin
-        .from("pets")
-        .update({
+      // Debug warning: Miniadmin can only edit the 4 values
+      let updateData = {};
+      if (admin.role === 'miniadmin') {
+        console.log('[Backend PUT] Miniadmin edit - restricting to values only');
+        updateData = {
+          value_normal: value_normal || '0',
+          value_golden: value_golden || '0',
+          value_rainbow: value_rainbow || '0',
+          value_void: value_void || '1',
+          updated_at: new Date().toISOString()
+        };
+      } else {
+        // Full admin can edit everything
+        updateData = {
           name,
           rarity,
           stats: stats || '0',
@@ -160,8 +256,15 @@ export default async function handler(req, res) {
           value_rainbow: value_rainbow || '0',
           value_void: value_void || '1',
           image_url: image_url || null,
+          how_to_get: how_to_get || null,
           updated_at: new Date().toISOString()
-        })
+        };
+      }
+
+      // Perform update using admin client (bypasses RLS)
+      const { data: updatedPets, error } = await supabaseAdmin
+        .from("pets")
+        .update(updateData)
         .eq("id", petId)
         .select();
 
@@ -177,20 +280,29 @@ export default async function handler(req, res) {
 
       const updatedPet = updatedPets[0];
 
-      // Calculate what changed for audit log (includes void value)
+      // Calculate what changed for audit log
       const changes = {};
-      if (oldPet.name !== name) changes.name = { from: oldPet.name, to: name };
-      if (oldPet.rarity !== rarity) changes.rarity = { from: oldPet.rarity, to: rarity };
-      if (oldPet.stats !== stats) changes.stats = { from: oldPet.stats, to: stats };
-      if (oldPet.stats_type !== stats_type) changes.stats_type = { from: oldPet.stats_type, to: stats_type };
+      if (admin.role !== 'miniadmin') {
+        if (oldPet.name !== name) changes.name = { from: oldPet.name, to: name };
+        if (oldPet.rarity !== rarity) changes.rarity = { from: oldPet.rarity, to: rarity };
+        if (oldPet.stats !== stats) changes.stats = { from: oldPet.stats, to: stats };
+        if (oldPet.stats_type !== stats_type) changes.stats_type = { from: oldPet.stats_type, to: stats_type };
+        if (oldPet.image_url !== image_url) changes.image_url = { from: oldPet.image_url ? 'changed' : 'none', to: image_url ? 'changed' : 'none' };
+        if (oldPet.how_to_get !== how_to_get) changes.how_to_get = { from: oldPet.how_to_get ? 'changed' : 'none', to: how_to_get ? 'changed' : 'none' };
+      }
+      // Track value changes for both admin types
       if (oldPet.value_normal !== value_normal) changes.value_normal = { from: oldPet.value_normal, to: value_normal };
       if (oldPet.value_golden !== value_golden) changes.value_golden = { from: oldPet.value_golden, to: value_golden };
       if (oldPet.value_rainbow !== value_rainbow) changes.value_rainbow = { from: oldPet.value_rainbow, to: value_rainbow };
       if (oldPet.value_void !== value_void) changes.value_void = { from: oldPet.value_void, to: value_void };
-      if (oldPet.image_url !== image_url) changes.image_url = { from: oldPet.image_url ? 'changed' : 'none', to: image_url ? 'changed' : 'none' };
 
       // Log to audit_log table
-      await logAudit(username, 'EDIT', updatedPet.id, updatedPet.name, changes);
+      await logAudit(username, 'EDIT', updatedPet.id, updatedPet.name, changes, admin.role);
+      
+      // Debug warning: Send webhook notification ONLY for miniadmin edits
+      if (admin.role === 'miniadmin' && Object.keys(changes).length > 0) {
+        await sendWebhookNotification(username, updatedPet.name, changes);
+      }
 
       console.log('[Backend PUT] Success - updated pet:', updatedPet.id);
       return res.status(200).json(updatedPet);
@@ -200,7 +312,7 @@ export default async function handler(req, res) {
     }
   }
 
-  // DELETE: Remove pet from database
+  // DELETE: Remove pet from database (admin only, miniadmin cannot delete)
   if (req.method === "DELETE") {
     try {
       const username = req.headers['x-admin-username'];
@@ -214,11 +326,17 @@ export default async function handler(req, res) {
         return res.status(401).json({ error: "Missing credentials" });
       }
 
-      // Verify admin credentials
-      const isValid = await verifyAdmin(username, password);
-      if (!isValid) {
+      // Verify admin credentials and get role
+      const admin = await verifyAdmin(username, password);
+      if (!admin) {
         console.log('[Backend DELETE] Auth failed');
         return res.status(401).json({ error: "Unauthorized" });
+      }
+      
+      // Debug warning: Miniadmin cannot delete pets
+      if (admin.role === 'miniadmin') {
+        console.log('[Backend DELETE] Miniadmin attempted to delete pet - blocked');
+        return res.status(403).json({ error: "Insufficient permissions. Only admins can delete pets." });
       }
 
       // Get pet data before deletion using admin client for audit log
@@ -240,7 +358,7 @@ export default async function handler(req, res) {
         return res.status(500).json({ error: "Failed to delete pet", details: error.message });
       }
 
-      // Log deleted pet data to audit_log (includes void value)
+      // Log deleted pet data to audit_log
       if (pet) {
         await logAudit(username, 'DELETE', pet.id, pet.name, {
           deleted_pet: {
@@ -251,9 +369,10 @@ export default async function handler(req, res) {
             value_normal: pet.value_normal,
             value_golden: pet.value_golden,
             value_rainbow: pet.value_rainbow,
-            value_void: pet.value_void
+            value_void: pet.value_void,
+            how_to_get: pet.how_to_get
           }
-        });
+        }, admin.role);
       }
 
       console.log('[Backend DELETE] Success:', petId);
