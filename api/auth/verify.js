@@ -10,7 +10,7 @@ const supabase = createClient(
   process.env.SUPABASE_ANON_KEY
 );
 
-// Rate limit config: 2 minutes (120000ms) cooldown after failed login
+// Rate limit config: 2 minutes (120000ms) cooldown after login attempt
 const LOGIN_COOLDOWN_MS = 2 * 60 * 1000;
 
 export default async function handler(req, res) {
@@ -79,10 +79,7 @@ export default async function handler(req, res) {
       return res.status(200).json({ valid: false, reason: 'Invalid password' });
     }
 
-    // Debug warning: Successful login - clear rate limit for this IP
-    rateLimitStore.delete(rateLimitKey);
-    
-    // Debug warning: Return role info to frontend for permission checks
+    // Debug warning: Successful login returns valid response
     console.log('[Auth] Credentials valid for:', username, 'Role:', admin.role || 'admin');
     return res.status(200).json({ 
       valid: true, 
