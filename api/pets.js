@@ -2,7 +2,11 @@
 // Path: /api/pets.js
 
 import { createClient } from "@supabase/supabase-js";
+import { checkRateLimit, getClientIP, formatWaitTime } from "./utils/rateLimiter.js";
 
+// Debug warning: Rate limit configs
+const FIFTEEN_MINUTES_MS = 15 * 60 * 1000; // 15 minutes for normal requests
+const ONE_HOUR_MS = 60 * 60 * 1000; // 1 hour for direct API calls without referer
 const THIRTY_MINUTES_SECONDS = 30 * 60;
 
 // Debug warning: Supabase client for database operations
@@ -179,6 +183,28 @@ export default async function handler(req, res) {
 
 // GET: Fetch all pets from database (includes how_to_get field)
 async function handleGet(req, res) {
+  const clientIP = getClientIP(req);
+  const referer = req.headers.referer || req.headers.origin || '';
+  
+  // Debug warning: Check if request is from website or direct API call
+  const isDirectAPICall = !referer || (!referer.includes('github.io') && !referer.includes('localhost'));
+  
+  // Debug warning: Apply different rate limits based on source
+  const rateLimitKey = `pets_get_${clientIP}`;
+  const cooldownTime = isDirectAPICall ? ONE_HOUR_MS : FIFTEEN_MINUTES_MS;
+  const maxRequests = isDirectAPICall ? 1 : 3; // Direct API: 1 per hour, Website: 3 per 15min
+  
+  const rateCheck = checkRateLimit(rateLimitKey, cooldownTime, maxRequests);
+  
+  if (!rateCheck.allowed) {
+    const waitTime = formatWaitTime(rateCheck.resetTime);
+    console.log(`[Rate Limit] GET /api/pets blocked for IP: ${clientIP} (Direct: ${isDirectAPICall})`);
+    return res.status(429).json({ 
+      error: `Rate limit exceeded. Please try again in ${waitTime}.`,
+      retryAfter: Math.ceil((rateCheck.resetTime - Date.now()) / 1000)
+    });
+  }
+
   res.setHeader(
     "Cache-Control",
     "public, max-age=0, s-maxage=1800, stale-while-revalidate=1800"
@@ -196,6 +222,7 @@ async function handleGet(req, res) {
       return res.status(500).json({ error: "Failed to fetch pets" });
     }
 
+    console.log(`[Rate Limit] GET success - Attempts left: ${rateCheck.attemptsLeft}`);
     return res.status(200).json(pets || []);
   } catch (err) {
     console.error("[API Error]:", err);
